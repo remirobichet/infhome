@@ -1,4 +1,5 @@
 #include <pspuser.h>
+#include <pspctrl.h>
 #include <pspdebug.h>
 #include <pspdisplay.h>
 #include <pspkernel.h>
@@ -21,7 +22,102 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 #define INFHOME_PI_IP "192.168.0.104"
 #define INFHOME_PI_PORT 8080
 
+#define COLOR_BG 0xFF17120F
+#define COLOR_PANEL 0xFF241C16
+#define COLOR_LINE 0xFF5B4938
+#define COLOR_TEXT 0xFFE6D8C5
+#define COLOR_MUTED 0xFF9F8D79
+#define COLOR_AMBER 0xFF49A7D7
+#define COLOR_GREEN 0xFF79BC8A
+#define COLOR_RED 0xFF6666C8
+
+static char psp_ip[16] = "Not connected";
+static int demo_mode;
+
 static volatile int apctl_error;
+
+static void draw_text(int x, int y, u32 color, const char *text)
+{
+    pspDebugScreenSetXY(x, y);
+    pspDebugScreenSetTextColor(color);
+    pspDebugScreenPrintf("%s", text);
+}
+
+static void draw_border(int x, int y, int width, int height)
+{
+    int i;
+
+    for (i = x; i < x + width; ++i)
+    {
+        pspDebugScreenPutChar(i, y, COLOR_LINE, '-');
+        pspDebugScreenPutChar(i, y + height - 1, COLOR_LINE, '-');
+    }
+
+    for (i = y; i < y + height; ++i)
+    {
+        pspDebugScreenPutChar(x, i, COLOR_LINE, '|');
+        pspDebugScreenPutChar(x + width - 1, i, COLOR_LINE, '|');
+    }
+
+    pspDebugScreenPutChar(x, y, COLOR_LINE, '+');
+    pspDebugScreenPutChar(x + width - 1, y, COLOR_LINE, '+');
+    pspDebugScreenPutChar(x, y + height - 1, COLOR_LINE, '+');
+    pspDebugScreenPutChar(x + width - 1, y + height - 1, COLOR_LINE, '+');
+}
+
+static void fill_panel(int x, int y, int width, int height)
+{
+    int column;
+    int row;
+
+    pspDebugScreenSetBackColor(COLOR_PANEL);
+
+    for (row = y; row < y + height; ++row)
+    {
+        for (column = x; column < x + width; ++column)
+        {
+            pspDebugScreenPutChar(column, row, COLOR_PANEL, ' ');
+        }
+    }
+
+    pspDebugScreenSetBackColor(COLOR_BG);
+}
+
+static void draw_dashboard(const char *message, int api_ok)
+{
+    pspDebugScreenSetBackColor(COLOR_BG);
+    pspDebugScreenSetTextColor(COLOR_TEXT);
+    pspDebugScreenClear();
+
+    draw_text(2, 2, COLOR_AMBER, "INFHOME");
+    draw_text(12, 2, COLOR_MUTED, "HOME DISPLAY");
+    draw_text(43, 2, demo_mode ? COLOR_AMBER : (api_ok ? COLOR_GREEN : COLOR_RED), demo_mode ? "DEMO MODE" : (api_ok ? "ONLINE" : "OFFLINE"));
+
+    draw_text(2, 4, COLOR_LINE, "--------------------------------------------------------");
+
+    fill_panel(2, 7, 35, 15);
+    draw_border(2, 7, 35, 15);
+    draw_text(4, 9, COLOR_MUTED, "MESSAGE FROM HOME");
+    draw_text(4, 12, COLOR_TEXT, message);
+    draw_text(4, 19, COLOR_MUTED, demo_mode ? "Source: local demo data" : (api_ok ? "Last sync: just now" : "Last sync: unavailable"));
+
+    fill_panel(39, 7, 19, 15);
+    draw_border(39, 7, 19, 15);
+    draw_text(41, 9, COLOR_MUTED, "SYSTEM");
+    draw_text(41, 12, demo_mode ? COLOR_AMBER : COLOR_GREEN, demo_mode ? "DEMO DATA" : "WIFI CONNECTED");
+    draw_text(41, 14, COLOR_MUTED, "PSP IP");
+    draw_text(41, 15, COLOR_TEXT, psp_ip);
+    draw_text(41, 18, COLOR_MUTED, "API");
+    draw_text(41, 19, demo_mode ? COLOR_AMBER : (api_ok ? COLOR_GREEN : COLOR_RED), demo_mode ? "SIMULATED" : (api_ok ? "REACHABLE" : "UNREACHABLE"));
+
+    draw_text(2, 25, COLOR_MUTED, "RASPBERRY PI");
+    draw_text(16, 25, COLOR_TEXT, INFHOME_PI_IP ":8080");
+    draw_text(2, 29, COLOR_AMBER, "X");
+    draw_text(4, 29, COLOR_MUTED, "REFRESH");
+    draw_text(19, 29, COLOR_AMBER, "SELECT");
+    draw_text(26, 29, COLOR_MUTED, "MODE");
+    draw_text(42, 29, COLOR_MUTED, "HOME TO QUIT");
+}
 
 static void apctl_handler(int old_state, int new_state, int event, int error, void *arg)
 {
@@ -152,7 +248,9 @@ static int init_network(void)
         return result;
     }
 
-    pspDebugScreenPrintf("Connected. PSP IP: %s\n", info.ip);
+    strncpy(psp_ip, info.ip, sizeof(psp_ip) - 1);
+    psp_ip[sizeof(psp_ip) - 1] = '\0';
+    pspDebugScreenPrintf("Connected. PSP IP: %s\n", psp_ip);
     return 0;
 }
 
@@ -213,23 +311,18 @@ static int fetch_status(char *buffer, unsigned int buffer_size)
     return 0;
 }
 
-static void print_message_from_json(const char *json)
+static int extract_message_from_json(const char *json, char *message, unsigned int message_size)
 {
     const char *key = "\"message\"";
     const char *start = strstr(json, key);
+    unsigned int message_length = 0;
 
-    if (start == NULL)
-    {
-        pspDebugScreenPrintf("Response:\n%s\n", json);
-        return;
-    }
+    if (start == NULL || message_size == 0)
+        return -1;
 
     start = strchr(start, ':');
     if (start == NULL)
-    {
-        pspDebugScreenPrintf("Response:\n%s\n", json);
-        return;
-    }
+        return -1;
 
     while (*start == ':' || *start == ' ')
         ++start;
@@ -237,15 +330,26 @@ static void print_message_from_json(const char *json)
     if (*start == '"')
         ++start;
 
-    pspDebugScreenPrintf("Message: ");
-
-    while (*start != '\0' && *start != '"' && *start != '\n' && *start != '\r')
+    while (*start != '\0' && *start != '"' && *start != '\n' && *start != '\r' && message_length < message_size - 1)
     {
-        pspDebugScreenPrintf("%c", *start);
+        message[message_length] = *start;
+        ++message_length;
         ++start;
     }
 
-    pspDebugScreenPrintf("\n");
+    message[message_length] = '\0';
+    return message_length > 0 ? 0 : -1;
+}
+
+static int refresh_dashboard_message(char *message, unsigned int message_size)
+{
+    char response[512];
+    int result = fetch_status(response, sizeof(response));
+
+    if (result < 0)
+        return result;
+
+    return extract_message_from_json(response, message, message_size);
 }
 
 int exit_callback(int arg1, int arg2, void *common)
@@ -287,12 +391,16 @@ int setup_callbacks(void)
 
 int main(void)
 {
-    char response[512];
+    char message[160] = "Connecting to Infhome...";
     int result;
+    int network_ready = 0;
+    unsigned int previous_buttons = 0;
 
     setup_callbacks();
 
     pspDebugScreenInit();
+    pspDebugScreenSetBackColor(COLOR_BG);
+    pspDebugScreenSetTextColor(COLOR_TEXT);
     pspDebugScreenClear();
 
     pspDebugScreenSetXY(0, 0);
@@ -301,28 +409,78 @@ int main(void)
     result = init_network();
     if (result < 0)
     {
-        pspDebugScreenPrintf("\nNetwork init failed.\n");
+        strncpy(message, "Network connection failed", sizeof(message) - 1);
+        message[sizeof(message) - 1] = '\0';
+        draw_dashboard(message, 0);
     }
     else
     {
+        network_ready = 1;
         pspDebugScreenPrintf("[4/4] Fetching Raspberry Pi status...\n");
-        result = fetch_status(response, sizeof(response));
+        result = refresh_dashboard_message(message, sizeof(message));
 
         if (result < 0)
-        {
-            pspDebugScreenPrintf("\nHTTP request failed.\n");
-        }
-        else
-        {
-            pspDebugScreenPrintf("\nRaw response:\n%s\n\n", response);
-            print_message_from_json(response);
-        }
+            strncpy(message, "Unable to reach Raspberry Pi", sizeof(message) - 1);
+
+        message[sizeof(message) - 1] = '\0';
+        draw_dashboard(message, result == 0);
     }
 
-    pspDebugScreenPrintf("\nPress Home to quit.\n");
+    sceCtrlSetSamplingCycle(0);
+    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
     while (1)
     {
+        SceCtrlData controller;
+        unsigned int pressed;
+
+        sceCtrlReadBufferPositive(&controller, 1);
+        pressed = controller.Buttons & ~previous_buttons;
+        previous_buttons = controller.Buttons;
+
+        if (pressed & PSP_CTRL_CROSS)
+        {
+            if (demo_mode)
+            {
+                strncpy(message, "Hello from Raspberry Pi", sizeof(message) - 1);
+                message[sizeof(message) - 1] = '\0';
+                draw_dashboard(message, 1);
+                continue;
+            }
+
+            draw_dashboard("Refreshing status...", 1);
+            result = network_ready ? refresh_dashboard_message(message, sizeof(message)) : -1;
+
+            if (result < 0)
+                strncpy(message, "Unable to reach Raspberry Pi", sizeof(message) - 1);
+
+            message[sizeof(message) - 1] = '\0';
+            draw_dashboard(message, result == 0);
+        }
+
+        if (pressed & PSP_CTRL_SELECT)
+        {
+            demo_mode = !demo_mode;
+
+            if (demo_mode)
+            {
+                strncpy(message, "Hello from Raspberry Pi", sizeof(message) - 1);
+                message[sizeof(message) - 1] = '\0';
+                draw_dashboard(message, 1);
+            }
+            else
+            {
+                draw_dashboard("Switching to live API...", 1);
+                result = network_ready ? refresh_dashboard_message(message, sizeof(message)) : -1;
+
+                if (result < 0)
+                    strncpy(message, "Network connection required", sizeof(message) - 1);
+
+                message[sizeof(message) - 1] = '\0';
+                draw_dashboard(message, result == 0);
+            }
+        }
+
         sceDisplayWaitVblankStart();
     }
 
