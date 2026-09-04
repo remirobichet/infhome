@@ -94,16 +94,18 @@ L'adresse du Raspberry Pi est definie dans `apps/psp-homebrew/main.c` :
 #define INFHOME_PI_IP "192.168.0.104"
 ```
 
-### Modes dashboard
+### Dashboard et controles
 
-Le homebrew demarre toujours en mode reel : il se connecte au Wi-Fi, puis recupere le message de l'API Raspberry Pi.
+Le homebrew demarre toujours en mode reel : il se connecte au Wi-Fi, puis recupere le message de l'API Raspberry Pi. La barre superieure affiche `INFHOME` et l'etat actuel : `DEMO`, `ONLINE` ou `OFFLINE`.
 
+- `CARRE` affiche l'accueil.
+- `TRIANGLE` affiche la liste de courses.
+- `ROND` affiche l'agenda.
+- `HAUT` alterne entre la page systeme et l'accueil. La page systeme est volontairement absente du menu et affiche l'IP PSP, l'etat Wi-Fi, l'accessibilite de l'API et l'adresse du Raspberry Pi.
 - `SELECT` bascule entre le mode reel et le mode demo.
 - En mode demo, aucune requete reseau n'est envoyee et le dashboard affiche des donnees locales simulees.
-- `X` rafraichit la source active : API en mode reel ou donnees locales en mode demo.
+- `CROIX` rafraichit la source active : API en mode reel ou donnees locales en mode demo.
 - `HOME` quitte l'application.
-
-Le mode demo est indique par `DEMO MODE` dans l'en-tete du dashboard.
 
 ### Emulation avec PPSSPP
 
@@ -112,7 +114,7 @@ PPSSPP permet d'iterer rapidement sur l'UI, les controles et la mise en page san
 1. Installer PPSSPP pour Windows depuis <https://www.ppsspp.org/download/>.
 2. Compiler le homebrew avec Docker.
 3. Dans PPSSPP, choisir `Load` puis ouvrir `apps/psp-homebrew/build/EBOOT.PBP`.
-4. Mapper les boutons PSP dans `Settings > Controls`, notamment `X`, `SELECT` et `HOME`.
+4. Mapper les boutons PSP dans `Settings > Controls`, notamment `CARRE`, `TRIANGLE`, `ROND`, `HAUT`, `CROIX`, `SELECT` et `HOME`.
 5. Utiliser `SELECT` dans le dashboard pour passer au mode demo et iterer sur l'UI hors ligne.
 
 PPSSPP ne valide pas fidelement les profils Wi-Fi PSP, ARK/FasterARK, le WPA2 ou le reseau materiel. Les tests Wi-Fi et API reels doivent toujours etre effectues sur la PSP physique.

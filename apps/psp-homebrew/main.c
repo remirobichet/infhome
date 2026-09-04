@@ -23,16 +23,38 @@ PSP_MAIN_THREAD_ATTR(PSP_THREAD_ATTR_USER);
 #define INFHOME_PI_PORT 8080
 
 #define COLOR_BG 0xFF17120F
-#define COLOR_PANEL 0xFF241C16
 #define COLOR_LINE 0xFF5B4938
 #define COLOR_TEXT 0xFFE6D8C5
 #define COLOR_MUTED 0xFF9F8D79
 #define COLOR_AMBER 0xFF49A7D7
 #define COLOR_GREEN 0xFF79BC8A
 #define COLOR_RED 0xFF6666C8
+#define COLOR_PSP_SQUARE 0xFFDE78D4
+#define COLOR_PSP_TRIANGLE 0xFF6FC477
+#define COLOR_PSP_CIRCLE 0xFF625DD8
+#define COLOR_PSP_CROSS 0xFFD88D4F
+
+typedef enum
+{
+    PAGE_HOME,
+    PAGE_SHOPPING,
+    PAGE_AGENDA,
+    PAGE_SYSTEM
+} Page;
+
+typedef enum
+{
+    BUTTON_SQUARE,
+    BUTTON_TRIANGLE,
+    BUTTON_CIRCLE,
+    BUTTON_CROSS
+} Button;
 
 static char psp_ip[16] = "Not connected";
 static int demo_mode;
+static int network_ready;
+static int api_reachable;
+static Page current_page = PAGE_HOME;
 
 static volatile int apctl_error;
 
@@ -43,80 +65,263 @@ static void draw_text(int x, int y, u32 color, const char *text)
     pspDebugScreenPrintf("%s", text);
 }
 
-static void draw_border(int x, int y, int width, int height)
+static const char *current_status(void)
 {
+    if (demo_mode)
+        return "DEMO";
+
+    return api_reachable ? "ONLINE" : "OFFLINE";
+}
+
+static u32 current_status_color(void)
+{
+    if (demo_mode)
+        return COLOR_AMBER;
+
+    return api_reachable ? COLOR_GREEN : COLOR_RED;
+}
+
+static void draw_horizontal_rule(int start_x, int end_x, int y)
+{
+    void *framebuffer;
+    int buffer_width;
+    int pixel_format;
     int i;
 
-    for (i = x; i < x + width; ++i)
-    {
-        pspDebugScreenPutChar(i, y, COLOR_LINE, '-');
-        pspDebugScreenPutChar(i, y + height - 1, COLOR_LINE, '-');
-    }
+    if (sceDisplayGetFrameBuf(&framebuffer, &buffer_width, &pixel_format, PSP_DISPLAY_SETBUF_IMMEDIATE) < 0 || framebuffer == NULL)
+        return;
 
-    for (i = y; i < y + height; ++i)
-    {
-        pspDebugScreenPutChar(x, i, COLOR_LINE, '|');
-        pspDebugScreenPutChar(x + width - 1, i, COLOR_LINE, '|');
-    }
-
-    pspDebugScreenPutChar(x, y, COLOR_LINE, '+');
-    pspDebugScreenPutChar(x + width - 1, y, COLOR_LINE, '+');
-    pspDebugScreenPutChar(x, y + height - 1, COLOR_LINE, '+');
-    pspDebugScreenPutChar(x + width - 1, y + height - 1, COLOR_LINE, '+');
+    for (i = start_x; i < end_x; ++i)
+        ((u32 *)framebuffer)[(y * 8 + 6) * buffer_width + i] = COLOR_LINE;
 }
 
-static void fill_panel(int x, int y, int width, int height)
+static void draw_vertical_rule(int x, int y)
 {
-    int column;
-    int row;
+    void *framebuffer;
+    int buffer_width;
+    int pixel_format;
+    int i;
 
-    pspDebugScreenSetBackColor(COLOR_PANEL);
+    if (sceDisplayGetFrameBuf(&framebuffer, &buffer_width, &pixel_format, PSP_DISPLAY_SETBUF_IMMEDIATE) < 0 || framebuffer == NULL)
+        return;
 
-    for (row = y; row < y + height; ++row)
+    for (i = y * 8; i < 272; ++i)
+        ((u32 *)framebuffer)[i * buffer_width + x * 7] = COLOR_LINE;
+}
+
+static void draw_topbar(void)
+{
+    int status_x = 68 - strlen(current_status());
+
+    draw_text(2, 1, COLOR_AMBER, "INFHOME");
+    draw_text(status_x - 8, 1, COLOR_MUTED, "STATUS");
+    draw_text(status_x, 1, current_status_color(), current_status());
+    draw_horizontal_rule(0, 480, 3);
+}
+
+static void draw_button_pixel(u32 *framebuffer, int buffer_width, int x, int y, u32 color)
+{
+    if (x >= 0 && x < 480 && y >= 0 && y < 272)
+        framebuffer[y * buffer_width + x] = color;
+}
+
+static void draw_button_icon(int x, int y, Button button)
+{
+    static const char *square[] =
     {
-        for (column = x; column < x + width; ++column)
+        "##########",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "##########"
+    };
+    static const char *triangle[] =
+    {
+        "    ##    ",
+        "   ####   ",
+        "   #  #   ",
+        "  #    #  ",
+        "  #    #  ",
+        " #      # ",
+        " #      # ",
+        "#        #",
+        "##########"
+    };
+    static const char *circle[] =
+    {
+        "   ####   ",
+        " ##    ## ",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        "#        #",
+        " ##    ## ",
+        "   ####   "
+    };
+    static const char *cross[] =
+    {
+        "##      ##",
+        " ###  ### ",
+        "  ######  ",
+        "   ####   ",
+        "   ####   ",
+        "  ######  ",
+        " ###  ### ",
+        "##      ##"
+    };
+    const char **shape;
+    u32 color;
+    void *framebuffer;
+    int buffer_width;
+    int pixel_format;
+    int row;
+    int column;
+    int shape_height;
+
+    switch (button)
+    {
+        case BUTTON_SQUARE:
+            shape = square;
+            shape_height = 10;
+            color = COLOR_PSP_SQUARE;
+            break;
+        case BUTTON_TRIANGLE:
+            shape = triangle;
+            shape_height = 9;
+            color = COLOR_PSP_TRIANGLE;
+            break;
+        case BUTTON_CIRCLE:
+            shape = circle;
+            shape_height = 9;
+            color = COLOR_PSP_CIRCLE;
+            break;
+        case BUTTON_CROSS:
+        default:
+            shape = cross;
+            shape_height = 8;
+            color = COLOR_PSP_CROSS;
+            break;
+    }
+
+    if (sceDisplayGetFrameBuf(&framebuffer, &buffer_width, &pixel_format, PSP_DISPLAY_SETBUF_IMMEDIATE) < 0 || framebuffer == NULL)
+        return;
+
+    for (row = 0; row < shape_height; ++row)
+    {
+        for (column = 0; shape[row][column] != '\0'; ++column)
         {
-            pspDebugScreenPutChar(column, row, COLOR_PANEL, ' ');
+            if (shape[row][column] == '#')
+                draw_button_pixel((u32 *)framebuffer, buffer_width, x * 8 + column, y * 8 + row, color);
         }
     }
-
-    pspDebugScreenSetBackColor(COLOR_BG);
 }
 
-static void draw_dashboard(const char *message, int api_ok)
+static void draw_menu_item(int y, const char *label, Page page, Button button)
+{
+    draw_button_icon(1, y, button);
+    draw_text(5, y, current_page == page ? COLOR_AMBER : COLOR_MUTED, label);
+
+    if (current_page == page)
+        draw_text(18, y, COLOR_AMBER, "<");
+}
+
+static void draw_menu(void)
+{
+    draw_vertical_rule(21, 4);
+    draw_text(1, 5, COLOR_MUTED, "PAGES");
+    draw_menu_item(8, "Accueil", PAGE_HOME, BUTTON_SQUARE);
+    draw_menu_item(12, "Courses", PAGE_SHOPPING, BUTTON_TRIANGLE);
+    draw_menu_item(16, "Agenda", PAGE_AGENDA, BUTTON_CIRCLE);
+    draw_horizontal_rule(0, 21 * 7, 26);
+    draw_button_icon(1, 28, BUTTON_CROSS);
+    draw_text(4, 28, COLOR_MUTED, "refresh");
+    draw_text(1, 31, COLOR_MUTED, "SELECT  switch mode");
+}
+
+static void draw_home_page(const char *message)
+{
+    draw_text(24, 5, COLOR_MUTED, "MAISON");
+    draw_text(24, 8, COLOR_TEXT, message);
+    draw_text(24, 12, COLOR_MUTED, "Aujourd'hui");
+    draw_text(24, 14, COLOR_TEXT, "Tout est sous controle.");
+    draw_text(24, 18, COLOR_MUTED, "Source");
+    draw_text(24, 20, demo_mode ? COLOR_AMBER : current_status_color(), demo_mode ? "Donnees de demonstration" : (api_reachable ? "Raspberry Pi" : "Connexion indisponible"));
+}
+
+static void draw_shopping_page(void)
+{
+    draw_text(24, 5, COLOR_MUTED, "A ACHETER");
+    draw_text(24, 8, COLOR_TEXT, "[ ] Lait");
+    draw_text(24, 10, COLOR_TEXT, "[ ] Pain complet");
+    draw_text(24, 12, COLOR_TEXT, "[ ] Tomates");
+    draw_text(24, 14, COLOR_MUTED, "[x] Cafe");
+    draw_text(24, 19, COLOR_MUTED, "3 articles restants");
+}
+
+static void draw_agenda_page(void)
+{
+    draw_text(24, 5, COLOR_MUTED, "AUJOURD'HUI");
+    draw_text(24, 8, COLOR_AMBER, "09:30");
+    draw_text(31, 8, COLOR_TEXT, "Reunion equipe");
+    draw_text(24, 11, COLOR_AMBER, "18:00");
+    draw_text(31, 11, COLOR_TEXT, "Courses");
+    draw_text(24, 14, COLOR_AMBER, "20:30");
+    draw_text(31, 14, COLOR_TEXT, "Diner maison");
+    draw_text(24, 19, COLOR_MUTED, "3 evenements a venir");
+}
+
+static void draw_system_page(void)
+{
+    draw_text(3, 5, COLOR_MUTED, "STATUT SYSTEME");
+    draw_text(3, 8, COLOR_MUTED, "MODE");
+    draw_text(18, 8, current_status_color(), current_status());
+    draw_text(3, 11, COLOR_MUTED, "WIFI");
+    draw_text(18, 11, network_ready ? COLOR_GREEN : COLOR_RED, network_ready ? "CONNECTED" : "DISCONNECTED");
+    draw_text(3, 14, COLOR_MUTED, "PSP IP");
+    draw_text(18, 14, COLOR_TEXT, psp_ip);
+    draw_text(3, 17, COLOR_MUTED, "API");
+    draw_text(18, 17, demo_mode ? COLOR_AMBER : current_status_color(), demo_mode ? "SIMULATED" : (api_reachable ? "REACHABLE" : "UNREACHABLE"));
+    draw_text(3, 20, COLOR_MUTED, "RASPBERRY PI");
+    draw_text(18, 20, COLOR_TEXT, INFHOME_PI_IP ":8080");
+    draw_text(3, 25, COLOR_MUTED, "HAUT: RETOUR ACCUEIL");
+}
+
+static void draw_dashboard(const char *message)
 {
     pspDebugScreenSetBackColor(COLOR_BG);
     pspDebugScreenSetTextColor(COLOR_TEXT);
     pspDebugScreenClear();
 
-    draw_text(2, 2, COLOR_AMBER, "INFHOME");
-    draw_text(12, 2, COLOR_MUTED, "HOME DISPLAY");
-    draw_text(43, 2, demo_mode ? COLOR_AMBER : (api_ok ? COLOR_GREEN : COLOR_RED), demo_mode ? "DEMO MODE" : (api_ok ? "ONLINE" : "OFFLINE"));
 
-    draw_text(2, 4, COLOR_LINE, "--------------------------------------------------------");
+    draw_topbar();
 
-    fill_panel(2, 7, 35, 15);
-    draw_border(2, 7, 35, 15);
-    draw_text(4, 9, COLOR_MUTED, "MESSAGE FROM HOME");
-    draw_text(4, 12, COLOR_TEXT, message);
-    draw_text(4, 19, COLOR_MUTED, demo_mode ? "Source: local demo data" : (api_ok ? "Last sync: just now" : "Last sync: unavailable"));
+    if (current_page == PAGE_SYSTEM)
+    {
+        draw_system_page();
+        return;
+    }
 
-    fill_panel(39, 7, 19, 15);
-    draw_border(39, 7, 19, 15);
-    draw_text(41, 9, COLOR_MUTED, "SYSTEM");
-    draw_text(41, 12, demo_mode ? COLOR_AMBER : COLOR_GREEN, demo_mode ? "DEMO DATA" : "WIFI CONNECTED");
-    draw_text(41, 14, COLOR_MUTED, "PSP IP");
-    draw_text(41, 15, COLOR_TEXT, psp_ip);
-    draw_text(41, 18, COLOR_MUTED, "API");
-    draw_text(41, 19, demo_mode ? COLOR_AMBER : (api_ok ? COLOR_GREEN : COLOR_RED), demo_mode ? "SIMULATED" : (api_ok ? "REACHABLE" : "UNREACHABLE"));
+    draw_menu();
 
-    draw_text(2, 25, COLOR_MUTED, "RASPBERRY PI");
-    draw_text(16, 25, COLOR_TEXT, INFHOME_PI_IP ":8080");
-    draw_text(2, 29, COLOR_AMBER, "X");
-    draw_text(4, 29, COLOR_MUTED, "REFRESH");
-    draw_text(19, 29, COLOR_AMBER, "SELECT");
-    draw_text(26, 29, COLOR_MUTED, "MODE");
-    draw_text(42, 29, COLOR_MUTED, "HOME TO QUIT");
+    switch (current_page)
+    {
+        case PAGE_SHOPPING:
+            draw_shopping_page();
+            break;
+        case PAGE_AGENDA:
+            draw_agenda_page();
+            break;
+        case PAGE_HOME:
+        default:
+            draw_home_page(message);
+            break;
+    }
 }
 
 static void apctl_handler(int old_state, int new_state, int event, int error, void *arg)
@@ -393,7 +598,6 @@ int main(void)
 {
     char message[160] = "Connecting to Infhome...";
     int result;
-    int network_ready = 0;
     unsigned int previous_buttons = 0;
 
     setup_callbacks();
@@ -411,7 +615,8 @@ int main(void)
     {
         strncpy(message, "Network connection failed", sizeof(message) - 1);
         message[sizeof(message) - 1] = '\0';
-        draw_dashboard(message, 0);
+        api_reachable = 0;
+        draw_dashboard(message);
     }
     else
     {
@@ -423,7 +628,8 @@ int main(void)
             strncpy(message, "Unable to reach Raspberry Pi", sizeof(message) - 1);
 
         message[sizeof(message) - 1] = '\0';
-        draw_dashboard(message, result == 0);
+        api_reachable = result == 0;
+        draw_dashboard(message);
     }
 
     sceCtrlSetSamplingCycle(0);
@@ -444,18 +650,19 @@ int main(void)
             {
                 strncpy(message, "Hello from Raspberry Pi", sizeof(message) - 1);
                 message[sizeof(message) - 1] = '\0';
-                draw_dashboard(message, 1);
+                draw_dashboard(message);
                 continue;
             }
 
-            draw_dashboard("Refreshing status...", 1);
+            draw_dashboard("Refreshing status...");
             result = network_ready ? refresh_dashboard_message(message, sizeof(message)) : -1;
 
             if (result < 0)
                 strncpy(message, "Unable to reach Raspberry Pi", sizeof(message) - 1);
 
             message[sizeof(message) - 1] = '\0';
-            draw_dashboard(message, result == 0);
+            api_reachable = result == 0;
+            draw_dashboard(message);
         }
 
         if (pressed & PSP_CTRL_SELECT)
@@ -466,19 +673,44 @@ int main(void)
             {
                 strncpy(message, "Hello from Raspberry Pi", sizeof(message) - 1);
                 message[sizeof(message) - 1] = '\0';
-                draw_dashboard(message, 1);
+                draw_dashboard(message);
             }
             else
             {
-                draw_dashboard("Switching to live API...", 1);
+                draw_dashboard("Switching to live API...");
                 result = network_ready ? refresh_dashboard_message(message, sizeof(message)) : -1;
 
                 if (result < 0)
                     strncpy(message, "Network connection required", sizeof(message) - 1);
 
                 message[sizeof(message) - 1] = '\0';
-                draw_dashboard(message, result == 0);
+                api_reachable = result == 0;
+                draw_dashboard(message);
             }
+        }
+
+        if (pressed & PSP_CTRL_SQUARE)
+        {
+            current_page = PAGE_HOME;
+            draw_dashboard(message);
+        }
+
+        if (pressed & PSP_CTRL_TRIANGLE)
+        {
+            current_page = PAGE_SHOPPING;
+            draw_dashboard(message);
+        }
+
+        if (pressed & PSP_CTRL_CIRCLE)
+        {
+            current_page = PAGE_AGENDA;
+            draw_dashboard(message);
+        }
+
+        if (pressed & PSP_CTRL_UP)
+        {
+            current_page = current_page == PAGE_SYSTEM ? PAGE_HOME : PAGE_SYSTEM;
+            draw_dashboard(message);
         }
 
         sceDisplayWaitVblankStart();
