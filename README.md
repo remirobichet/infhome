@@ -44,6 +44,25 @@ Reponse :
 
 Le code natif PSP se trouve maintenant dans `apps/psp-homebrew`.
 
+### Configuration PSP
+
+La PSP-2004 utilise le firmware Sony `6.60` avec FasterARK en mode Live.
+
+- FasterARK active ARK pour executer le homebrew natif.
+- Apres un arret complet, il faut relancer FasterARK avant de lancer Infhome.
+- L'installation reste non permanente : ne pas lancer `CustomIPL` pour ce projet.
+- Le Wi-Fi doit etre teste dans les reglages Sony apres le lancement de FasterARK avant de lancer Infhome.
+
+Le profil Wi-Fi utilise par Infhome est configure dans les reglages Sony de la PSP :
+
+```text
+Routeur : WPA2-PSK [AES]
+PSP : WPA PSK AES
+Profil PSP : 1
+```
+
+Le homebrew reutilise ce profil en appelant `sceNetApctlConnect(1)`. Le SSID et le mot de passe restent enregistres dans la configuration systeme PSP et ne sont pas stockes dans le code source.
+
 Compilation avec Docker :
 
 ```bash
