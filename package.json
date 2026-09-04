@@ -1,0 +1,10 @@
+{
+  "name": "infhome",
+  "private": true,
+  "packageManager": "pnpm@9.15.0",
+  "scripts": {
+    "api:dev": "pnpm --filter raspberry-api dev",
+    "api:build": "pnpm --filter raspberry-api build",
+    "api:start": "pnpm --filter raspberry-api start"
+  }
+}
