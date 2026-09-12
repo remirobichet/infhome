@@ -5,6 +5,12 @@
   "scripts": {
     "api:dev": "pnpm --filter raspberry-api dev",
     "api:build": "pnpm --filter raspberry-api build",
-    "api:start": "pnpm --filter raspberry-api start"
+    "api:start": "pnpm --filter raspberry-api start",
+    "web:dev": "pnpm --filter infhome-web dev",
+    "web:build": "pnpm --filter infhome-web build",
+    "web:start": "pnpm --filter infhome-web start",
+    "web:typecheck": "pnpm --filter infhome-web typecheck",
+    "web:test": "pnpm --filter infhome-web test",
+    "web:test:e2e": "pnpm --filter infhome-web test:e2e"
   }
 }

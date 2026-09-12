@@ -8,7 +8,30 @@ Le contexte complet, l'architecture cible, les decisions ouvertes et la feuille 
 
 - `apps/raspberry-api` : API locale du Raspberry Pi en TypeScript
 - `apps/psp-homebrew` : homebrew natif PSP
-- `apps/web` : future application web de mise a jour des donnees
+- `apps/web` : backoffice Nuxt de mise a jour des courses et de l'agenda
+
+## Backoffice web
+
+Nuxt 4, Tailwind CSS 4 et shadcn-vue. Interface en francais, adaptee au telephone, avec connexion personnelle, themes clair/sombre et publication d'un snapshot JSON public.
+
+```bash
+pnpm install
+cp apps/web/.env.example apps/web/.env
+# Renseigner les identifiants et le secret de session dans apps/web/.env.
+pnpm web:dev
+```
+
+Commandes de verification :
+
+```bash
+pnpm web:typecheck
+pnpm web:test
+pnpm web:build
+pnpm --filter infhome-web exec playwright install --with-deps chromium
+pnpm web:test:e2e
+```
+
+Voir [`apps/web/README.md`](apps/web/README.md) pour la configuration et le deploiement Coolify avec volume persistant, et [`docs/SNAPSHOT_CONTRACT.md`](docs/SNAPSHOT_CONTRACT.md) pour le contrat v1.
 
 ## API Raspberry Pi
 

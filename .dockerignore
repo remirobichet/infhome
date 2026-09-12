@@ -1,0 +1,11 @@
+.git
+**/node_modules
+**/.nuxt
+**/.output
+**/.env
+**/.env.*
+**/data
+**/test-results
+**/playwright-report
+apps/psp-homebrew
+apps/raspberry-api

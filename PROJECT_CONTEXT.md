@@ -83,7 +83,20 @@ L'adresse du Raspberry devra rester stable grâce à une réservation DHCP, ou �
 
 ### Web
 
-Le dossier `apps/web` est encore un emplacement réservé. Le backoffice Nuxt n'est pas implémenté.
+Le backoffice est implémenté dans `apps/web` avec Nuxt 4.5.2, Tailwind CSS 4.3.3 via Vite et shadcn-vue/shadcn-nuxt 2.8.2.
+
+- Interface en français, conçue d'abord pour le téléphone, avec thèmes clair et sombre et une discrète inspiration PSP.
+- Un compte personnel, identifiant et mot de passe configurés côté serveur, session par cookie sécurisé.
+- Courses sous forme de texte, un article par ligne, avec réinitialisation du formulaire.
+- Agenda manuel : titre, date de début, date de fin facultative et heure facultative.
+- Publication explicite des deux formulaires, validation Zod partagée et écriture atomique.
+- Snapshot public, avec sélection automatique des trois prochains événements à chaque lecture.
+- Conflits de publication détectés par révision UUID ; modifications locales conservées en cas d'erreur.
+- Dockerfile et documentation Coolify disponibles. Le domaine prévu est `infhome.remirobichet.fr`.
+
+Les tests unitaires, la vérification des types, le build de production et les parcours Chromium mobiles passent localement. Docker n'est pas disponible dans l'environnement WSL de cette session : le build de l'image et la persistance réelle après redéploiement Coolify restent à valider sur l'environnement cible.
+
+Documentation : `apps/web/README.md`. Contrat v1 : `docs/SNAPSHOT_CONTRACT.md`. TypeScript est fixé à la branche 6.0, car TypeScript 7 n'est pas compatible avec `vue-tsc` actuellement.
 
 ## Architecture retenue
 
@@ -127,18 +140,19 @@ Nuxt sert :
 
 - le backoffice d'édition ;
 - une route serveur authentifiée pour enregistrer les données ;
-- une route HTTPS permettant au Raspberry de télécharger le snapshot.
+- une route publique permettant au Raspberry de télécharger le snapshot, en HTTPS derrière le proxy Coolify.
 
-Routes envisagées :
+Routes implémentées :
 
 ```text
 POST /api/admin/snapshot
+GET  /api/admin/snapshot
 GET  /snapshot.json
 ```
 
 ### Écriture du snapshot
 
-La route d'administration devra :
+La route d'administration réalise :
 
 1. vérifier l'authentification ;
 2. valider complètement les données reçues ;
@@ -152,7 +166,9 @@ Le fichier ne doit pas être écrit dans le dossier `public` du dépôt, car un 
 /var/lib/infhome/snapshot.json
 ```
 
-Nuxt/Nitro peut lire ce fichier et le renvoyer depuis `GET /snapshot.json`. Caddy ou Nginx pourra aussi le servir directement si cela simplifie le déploiement.
+Le fichier persistant contient tous les événements publiés (jusqu'à 100) et une révision interne. Nuxt/Nitro le lit puis expose uniquement les trois prochains événements depuis `GET /snapshot.json`. Le proxy ne doit donc pas servir directement le fichier persistant : la sélection doit évoluer sans nouvelle publication. `updatedAt` reste la date de publication manuelle ; la réponse publique n'est pas mise en cache.
+
+Coolify doit monter un volume nommé sur `/var/lib/infhome`, accessible à l'UID/GID `1000:1000`. Exécuter un seul processus et une seule instance, sans chevauchement de deux conteneurs écrivains lors d'un déploiement. Le Dockerfile utilise Node 24 LTS et expose le port interne 3000.
 
 ### Limites acceptées du stockage JSON
 
@@ -288,9 +304,9 @@ INFHOME_TIMEZONE=Europe/Paris
 INFHOME_DATA_DIR=/var/lib/infhome
 ```
 
-## Contrats JSON proposés
+## Contrats JSON
 
-Ces contrats sont des brouillons. Ils devront être validés avant implémentation afin d'éviter plusieurs formats incompatibles.
+Le snapshot VPS v1 est défini et implémenté dans `apps/web/shared/snapshot.ts`, avec sa documentation dans `docs/SNAPSHOT_CONTRACT.md`. La réponse agrégée Raspberry reste une proposition à implémenter.
 
 ### Snapshot produit par Nuxt
 
@@ -304,8 +320,10 @@ Ces contrats sont des brouillons. Ils devront être validés avant implémentati
   ],
   "agenda": [
     {
-      "time": "18:30",
-      "title": "Dentiste"
+      "title": "Dentiste",
+      "startDate": "2026-09-23",
+      "endDate": null,
+      "time": "18:30"
     }
   ]
 }
@@ -339,8 +357,10 @@ Ces contrats sont des brouillons. Ils devront être validés avant implémentati
     ],
     "agenda": [
       {
-        "time": "18:30",
-        "title": "Dentiste"
+        "title": "Dentiste",
+        "startDate": "2026-09-23",
+        "endDate": null,
+        "time": "18:30"
       }
     ]
   }
@@ -348,6 +368,16 @@ Ces contrats sont des brouillons. Ils devront être validés avant implémentati
 ```
 
 ### Règles du contrat PSP
+
+Décisions v1 du snapshot VPS :
+
+- Corps public limité à 4 096 octets UTF-8 ; 20 articles de 64 octets maximum chacun.
+- Jusqu'à 100 événements conservés dans le document publié complet, titres de 96 octets maximum.
+- Trois événements exposés, sans limite d'horizon, triés par date de début puis heure. Les périodes en cours restent présentes jusqu'à leur dernier jour inclus. Les événements d'un jour sans heure restent toute la journée ; ceux avec heure sont retirés lorsque leur minute de début est passée.
+- Dates civiles au format `YYYY-MM-DD`, de 2000 à 2099 ; `endDate` et `time` sont explicitement `null` lorsqu'ils sont absents. Interprétation en `Europe/Paris`.
+- Le document complet d'administration ajoute les UUID d'événements et une révision ; ces champs ne sont pas exposés publiquement. Requêtes d'administration et fichier persistant limités à 65 536 octets.
+- Le Raspberry doit remplacer son cache après chaque téléchargement valide, même si `updatedAt` est inchangé : la sélection des trois événements peut avoir changé. Dater séparément les téléchargements réussis.
+- Pour le futur dashboard agrégé, une limite de 8 Kio de corps JSON est recommandée, à confirmer côté C avec un espace borné distinct pour les en-têtes.
 
 - Garder une propriété `version` entière.
 - Préférer les timestamps Unix aux formats de date complexes.
@@ -390,7 +420,7 @@ Pour le contrat final, il faudra probablement :
 - Sauvegarder le volume contenant `snapshot.json`.
 - Limiter taille et fréquence des écritures.
 
-Le snapshot peut être public s'il ne contient aucune donnée sensible. Sinon, le Raspberry devra utiliser un secret de lecture conservé uniquement dans son fichier d'environnement.
+Le snapshot est public, conformément au choix du propriétaire. Aucun secret de lecture n'est requis sur le Raspberry. Les routes d'administration restent protégées par session, contrôle strict d'origine, limites de taille et de fréquence. Le cookie est chiffré, `HttpOnly`, `SameSite=Strict`, `Secure` en production et expire après sept jours.
 
 ### Réseau local
 
@@ -419,9 +449,8 @@ La méthode exacte de contrôle de l'écran PSP reste à étudier dans PSPSDK. C
 ## Décisions encore ouvertes
 
 - Technologie Raspberry définitive : Node/TypeScript ou Python 3 après test ARMv6.
-- Méthode d'authentification du backoffice Nuxt.
-- Snapshot public ou protégé par un secret de lecture.
-- Schéma JSON final et taille maximale acceptée par la PSP.
+- Taille maximale de la réponse agrégée acceptée par la PSP et implémentation de son parseur ; le snapshot VPS v1 est fixé à 4 Kio.
+- Configuration effective du domaine et du volume Coolify, build Docker et validation de la restauration après redéploiement.
 - Coordonnées et champs Open-Meteo nécessaires.
 - Fréquence de rafraîchissement automatique côté PSP.
 - Gestion précise des caractères accentués dans l'interface native.
@@ -438,12 +467,14 @@ La méthode exacte de contrôle de l'écran PSP reste à étudier dans PSPSDK. C
 
 ### Étape 2 : créer le snapshot VPS
 
-- Initialiser application Nuxt dans `apps/web`.
-- Créer authentification minimale du backoffice.
-- Définir et valider schéma JSON version 1.
-- Implémenter écriture atomique sur volume persistant.
-- Exposer `GET /snapshot.json` en HTTPS.
-- Tester restauration après redéploiement du VPS.
+- [x] Initialiser l'application Nuxt dans `apps/web` avec Tailwind CSS et shadcn-vue.
+- [x] Créer l'authentification personnelle du backoffice.
+- [x] Définir et valider le schéma JSON version 1.
+- [x] Implémenter l'écriture atomique dans un dossier configurable et tester la restauration au niveau du stockage.
+- [x] Implémenter `GET /snapshot.json` avec la sélection automatique des trois prochains événements.
+- [x] Ajouter les formulaires mobiles, la publication, les thèmes et les tests navigateur.
+- [ ] Configurer Coolify, le domaine HTTPS et le volume persistant, puis valider le build Docker.
+- [ ] Tester la restauration après redéploiement du VPS et configurer la sauvegarde du volume.
 
 ### Étape 3 : enrichir API Raspberry
 

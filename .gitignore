@@ -4,3 +4,11 @@ apps/raspberry-api/dist/
 
 build/
 apps/psp-homebrew/build/
+
+.nuxt/
+.output/
+.env
+.env.*
+!.env.example
+apps/web/data/
+apps/web/test-results/
