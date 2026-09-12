@@ -2,6 +2,8 @@
 
 Ce depot regroupe les briques du projet Infhome.
 
+Le contexte complet, l'architecture cible, les decisions ouvertes et la feuille de route sont regroupes dans [`PROJECT_CONTEXT.md`](PROJECT_CONTEXT.md).
+
 ## Structure
 
 - `apps/raspberry-api` : API locale du Raspberry Pi en TypeScript
