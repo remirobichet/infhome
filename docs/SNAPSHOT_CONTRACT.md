@@ -96,7 +96,7 @@ Le corps d'administration et le fichier persistant sont limités à **65 536 oct
 
 ## Suite Raspberry / PSP
 
-Le contrat ci-dessus est implémenté côté Nuxt. Le Raspberry et le client PSP utilisent encore `/api/status` et devront être adaptés.
+Le contrat ci-dessus est implémenté côté Nuxt et validé par le Raspberry. Le Raspberry expose désormais `/api/v1/dashboard` ; le client PSP utilise encore `/api/status` et devra être adapté. Voir [`DASHBOARD_CONTRACT.md`](DASHBOARD_CONTRACT.md).
 
 La limite de 4 Kio concerne uniquement le snapshot VPS. Prévoir une limite distincte pour la réponse agrégée Raspberry ; **8 Kio de corps JSON** est une recommandation initiale à confirmer lors de l'implémentation C, avec un espace séparé et borné pour les en-têtes HTTP.
 

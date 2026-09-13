@@ -1,6 +1,17 @@
 # Infhome : contexte, architecture cible et reprise du développement
 
-Dernière mise à jour : 12 septembre 2026
+Dernière mise à jour : 13 septembre 2026
+
+## Décisions du 13 septembre 2026
+
+- Matériel confirmé : **Raspberry Pi Zero 2 W Rev 1.0**, Raspbian GNU/Linux 13, `armv7l` (la mention historique Zero W/ARMv6 était incorrecte).
+- Sur le Pi : Node 20.19.2, Python 3.13.5 ; NTP actif et synchronisé, fuseau `Europe/Paris`. Installer Node 22 LTS pour le service final.
+- L'API Raspberry est implémentée en TypeScript avec HTTP natif Node, sans dépendance de production : snapshot validé, caches atomiques, météo Toulouse, heure/NTP, `/api/v1/dashboard` et `/api/status` historique.
+- Contenu et météo : récupération immédiate au démarrage puis toutes les 15 minutes. Sans cache valide, sources à `null` ; dernières données conservées en cas d'erreur.
+- Météo : maximum prévu et état représentatif de chaque demi-journée d'aujourd'hui, 00:00–11:59 et 12:00–23:59, en heure de Paris. Coordonnées Toulouse centre `43.6045, 1.4440`.
+- Déploiement retenu : archive construite sur WSL, `scp` vers `infhome@192.168.0.104`, installation avec `sudo`, service `systemd`. Scripts fournis, caches et configuration conservés aux mises à jour, retour à la version précédente si le contrôle HTTP échoue.
+- Le backoffice n'est pas encore déployé ; son URL est prévue. Tests locaux API réussis ; installation et fonctionnement sur le Pi restent à vérifier.
+- Références actuelles : `apps/raspberry-api/README.md` et `docs/DASHBOARD_CONTRACT.md`. Le client C PSP reste à connecter au nouveau dashboard.
 
 ## Rôle de ce document
 
@@ -26,7 +37,7 @@ Infhome transforme une PSP-2004 en écran d'information mural. La PSP affiche no
 - un agenda ;
 - de futures informations domestiques.
 
-Un Raspberry Pi Zero W reste allumé sur le réseau local. Il récupère les données Internet, les met en cache et fournit à la PSP une API HTTP compatible avec son ancien environnement réseau.
+Un Raspberry Pi Zero 2 W reste allumé sur le réseau local. Il récupère les données Internet, les met en cache et fournit à la PSP une API HTTP compatible avec son ancien environnement réseau.
 
 Un futur capteur de présence relié au Raspberry devra permettre de réduire, couper ou réactiver l'affichage de la PSP.
 
@@ -49,9 +60,9 @@ L'accès direct de la PSP à Internet ne fonctionne pas correctement. Une erreur
 
 ### Raspberry
 
-Une API TypeScript minimale existe dans `apps/raspberry-api`.
+Une API TypeScript complète existe dans `apps/raspberry-api`, avec le serveur HTTP natif de Node et sans dépendance de production. Elle expose `/api/v1/dashboard` ; le contrat est documenté dans `docs/DASHBOARD_CONTRACT.md`.
 
-Route actuelle :
+Route historique conservée pour la PSP actuelle :
 
 ```text
 GET /api/status
@@ -112,7 +123,7 @@ snapshot.json persistant sur VPS
     |
     | HTTPS, téléchargement périodique
     v
-Raspberry Pi Zero W
+Raspberry Pi Zero 2 W
     |
     | cache du snapshot + météo + heure système
     | API HTTP locale
@@ -191,7 +202,7 @@ Le Raspberry agrège trois sources :
 
 ### Contenu du VPS
 
-- Télécharger `snapshot.json` toutes les 30 à 60 secondes.
+- Télécharger `snapshot.json` toutes les 15 minutes.
 - Utiliser un timeout réseau de 5 à 10 secondes.
 - Valider taille, version et structure avant remplacement du cache.
 - Conserver le fichier précédent en cas d'erreur HTTP, JSON invalide ou contenu incomplet.
@@ -228,7 +239,7 @@ Open-Meteo est le fournisseur envisagé pour la première version :
 - latitude et longitude fixes ;
 - récupération possible des conditions actuelles et prévisions journalières.
 
-Fréquence recommandée : toutes les 10 à 15 minutes.
+Fréquence retenue : toutes les 15 minutes. Deux créneaux d'aujourd'hui, 00:00–11:59 et 12:00–23:59 : maximum des températures horaires et état représentatif, avec priorité aux précipitations et orages. Les deux créneaux restent affichables toute la journée.
 
 Le Raspberry transforme la réponse externe vers un petit format stable destiné à Infhome. Les codes météo peuvent être convertis en libellés courts sur le Raspberry afin de garder la PSP simple.
 
@@ -240,7 +251,7 @@ Cache local envisagé :
 
 ### API locale
 
-Route principale envisagée :
+Route principale implémentée :
 
 ```text
 GET /api/v1/dashboard
@@ -267,25 +278,13 @@ POST /api/refresh
 
 ### Technologie du service
 
-Le service existant utilise TypeScript et Express. Le conserver est le choix le plus simple si une version compatible de Node fonctionne sur le Raspberry.
+Le matériel confirmé est un Pi Zero 2 W avec système ARMv7. Le service conserve TypeScript et utilise HTTP natif Node à la place du serveur Express minimal : aucune dépendance de production à transférer ou installer. Node 22 LTS est recommandé et disponible officiellement pour `linux-armv7l`. Le Node 20.19.2 actuel doit être mis à jour.
 
-Attention : le Raspberry Pi Zero W original utilise une architecture ARMv6. Le support ARMv6 par les versions modernes officielles de Node est limité. Avant de poursuivre, vérifier sur le Raspberry :
-
-```bash
-uname -m
-node --version
-```
-
-Décision à prendre après ce test :
-
-- conserver TypeScript et Express si Node est installé, maintenable et stable ;
-- utiliser Python 3 si Node pose un problème de compatibilité ARMv6.
-
-Éviter Docker sur le Raspberry Pi Zero W : la mémoire est limitée et les images ARMv6 ne sont pas toujours disponibles.
+Le déploiement utilise une archive `.tar.gz` et `systemd`, sans Docker ni Git sur le Pi. Procédure complète dans `apps/raspberry-api/README.md`.
 
 ### Exécution en production
 
-Le service devra être lancé par `systemd` avec :
+Le service `systemd` fourni dans `apps/raspberry-api/deploy` prévoit :
 
 - démarrage automatique ;
 - redémarrage après erreur ;
@@ -300,13 +299,14 @@ PORT=8080
 INFHOME_SNAPSHOT_URL=https://example.com/snapshot.json
 INFHOME_LATITUDE=...
 INFHOME_LONGITUDE=...
-INFHOME_TIMEZONE=Europe/Paris
+INFHOME_REFRESH_SECONDS=900
+INFHOME_TIMEOUT_SECONDS=8
 INFHOME_DATA_DIR=/var/lib/infhome
 ```
 
 ## Contrats JSON
 
-Le snapshot VPS v1 est défini et implémenté dans `apps/web/shared/snapshot.ts`, avec sa documentation dans `docs/SNAPSHOT_CONTRACT.md`. La réponse agrégée Raspberry reste une proposition à implémenter.
+Le snapshot VPS v1 est défini et implémenté dans `apps/web/shared/snapshot.ts`, avec sa documentation dans `docs/SNAPSHOT_CONTRACT.md`. La réponse agrégée Raspberry est implémentée ; son contrat complet est dans `docs/DASHBOARD_CONTRACT.md`.
 
 ### Snapshot produit par Nuxt
 
@@ -341,13 +341,13 @@ Le snapshot VPS v1 est défini et implémenté dans `apps/web/shared/snapshot.ts
     "synced": true
   },
   "weather": {
-    "temperature": 18,
-    "label": "Nuageux",
-    "min": 12,
-    "max": 20,
+    "date": "2026-09-12",
+    "morning": { "max": 23.4, "code": 3, "label": "Couvert" },
+    "evening": { "max": 28.1, "code": 61, "label": "Pluvieux" },
     "fetchedAt": 1789199700,
     "stale": false
   },
+  "contentSync": { "fetchedAt": 1789199700, "stale": false },
   "content": {
     "version": 1,
     "updatedAt": 1789200000,
@@ -448,10 +448,10 @@ La méthode exacte de contrôle de l'écran PSP reste à étudier dans PSPSDK. C
 
 ## Décisions encore ouvertes
 
-- Technologie Raspberry définitive : Node/TypeScript ou Python 3 après test ARMv6.
+- Installer Node 22 LTS sur le Pi et valider le déploiement `systemd` fourni.
 - Taille maximale de la réponse agrégée acceptée par la PSP et implémentation de son parseur ; le snapshot VPS v1 est fixé à 4 Kio.
 - Configuration effective du domaine et du volume Coolify, build Docker et validation de la restauration après redéploiement.
-- Coordonnées et champs Open-Meteo nécessaires.
+- Valider sur le Pi les prévisions Toulouse par demi-journée et la reprise hors ligne.
 - Fréquence de rafraîchissement automatique côté PSP.
 - Gestion précise des caractères accentués dans l'interface native.
 - Méthode future de gestion du rétroéclairage ou de la veille PSP.
@@ -460,10 +460,11 @@ La méthode exacte de contrôle de l'écran PSP reste à étudier dans PSPSDK. C
 
 ### Étape 1 : valider le Raspberry
 
-- Vérifier architecture du système et version Node.
-- Vérifier synchronisation NTP et fuseau `Europe/Paris`.
-- Configurer une réservation DHCP pour l'adresse du Raspberry.
-- Choisir TypeScript ou Python pour le service final.
+- [x] Vérifier architecture du système et version Node : ARMv7, Node 20.19.2.
+- [x] Vérifier synchronisation NTP et fuseau `Europe/Paris`.
+- [ ] Confirmer la réservation DHCP de `192.168.0.104`.
+- [x] Choisir TypeScript avec HTTP natif Node pour le service final.
+- [ ] Installer Node 22 LTS sur le Pi.
 
 ### Étape 2 : créer le snapshot VPS
 
@@ -478,13 +479,14 @@ La méthode exacte de contrôle de l'écran PSP reste à étudier dans PSPSDK. C
 
 ### Étape 3 : enrichir API Raspberry
 
-- Télécharger et valider snapshot VPS en arrière-plan.
-- Ajouter cache mémoire et cache disque.
-- Ajouter synchronisation météo Open-Meteo.
-- Ajouter heure système et état NTP.
-- Exposer `GET /api/v1/dashboard`.
-- Ajouter indicateurs `stale` et dates de dernière mise à jour.
-- Installer service `systemd`.
+- [x] Télécharger et valider snapshot VPS en arrière-plan.
+- [x] Ajouter cache mémoire et cache disque.
+- [x] Ajouter synchronisation météo Open-Meteo par demi-journée.
+- [x] Ajouter heure système et état NTP.
+- [x] Exposer `GET /api/v1/dashboard`.
+- [x] Ajouter indicateurs `stale` et dates de dernière mise à jour.
+- [x] Fournir archive et installation du service `systemd`.
+- [ ] Installer et vérifier le service sur le Pi physique.
 
 ### Étape 4 : connecter dashboard PSP
 

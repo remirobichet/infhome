@@ -35,35 +35,21 @@ Voir [`apps/web/README.md`](apps/web/README.md) pour la configuration et le depl
 
 ## API Raspberry Pi
 
-Installation :
+Service TypeScript avec HTTP natif Node, sans dépendance de production. Cible : Raspberry Pi Zero 2 W, Raspbian 13 ARMv7, Node 22 LTS.
 
 ```bash
 pnpm install
-```
-
-Developpement :
-
-```bash
 pnpm api:dev
+pnpm api:test
+pnpm api:package
 ```
 
-Build :
+- `GET /api/status` : message historique compatible avec le homebrew actuel.
+- `GET /api/v1/dashboard` : heure/NTP, météo Toulouse matin et après-midi/soir, courses et agenda.
+- Synchronisation des deux sources toutes les 15 minutes, caches persistants et fonctionnement hors ligne.
+- Déploiement depuis WSL par archive `.tar.gz`, `scp`, puis service `systemd` ; aucun Git ou Docker sur le Pi.
 
-```bash
-pnpm api:build
-```
-
-L'API expose actuellement :
-
-- `GET /api/status`
-
-Reponse :
-
-```json
-{
-  "message": "Hello from Raspberry Pi"
-}
-```
+Installation, mise à jour de Node et exploitation : [`apps/raspberry-api/README.md`](apps/raspberry-api/README.md). Format PSP : [`docs/DASHBOARD_CONTRACT.md`](docs/DASHBOARD_CONTRACT.md).
 
 ## Homebrew PSP
 

@@ -1,6 +1,8 @@
 node_modules/
 
 apps/raspberry-api/dist/
+apps/raspberry-api/data/
+apps/raspberry-api/releases/
 
 build/
 apps/psp-homebrew/build/

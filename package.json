@@ -6,6 +6,8 @@
     "api:dev": "pnpm --filter raspberry-api dev",
     "api:build": "pnpm --filter raspberry-api build",
     "api:start": "pnpm --filter raspberry-api start",
+    "api:test": "pnpm --filter raspberry-api test",
+    "api:package": "pnpm --filter raspberry-api package",
     "web:dev": "pnpm --filter infhome-web dev",
     "web:build": "pnpm --filter infhome-web build",
     "web:start": "pnpm --filter infhome-web start",

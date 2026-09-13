@@ -1,0 +1,29 @@
+[Unit]
+Description=Infhome Raspberry HTTP API
+After=network.target
+
+[Service]
+Type=simple
+User=infhome-api
+Group=infhome-api
+WorkingDirectory=/opt/infhome/current
+EnvironmentFile=/etc/infhome/infhome.env
+ExecStart=/usr/bin/node /opt/infhome/current/dist/index.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+StateDirectory=infhome
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+
+[Install]
+WantedBy=multi-user.target
