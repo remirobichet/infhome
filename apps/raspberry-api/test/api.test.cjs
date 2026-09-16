@@ -11,6 +11,7 @@ const { validateSnapshot } = require('../dist/snapshot');
 const { parseWeather, validateWeather, localDate } = require('../dist/weather');
 const { createApi } = require('../dist/server');
 const { configuration } = require('../dist/config');
+const { contentRefresher } = require('../dist/content');
 
 const snapshot = () => ({ version: 1, updatedAt: 1789200000, shopping: ['Pain', 'Thé'], agenda: [
   { title: 'Dentiste', startDate: '2026-09-23', endDate: null, time: '18:30' },
@@ -106,7 +107,7 @@ test('téléchargement borné : HTTP, JSON, UTF-8, taille, timeout et retour du 
 
 test('HTTP PSP : hors ligne, stale, framing HTTP/1.0, méthodes et taille', async t => {
   const content = { value: null }, weather = { value: null };
-  const server = createApi(content, weather, 900000, () => null);
+  const server = createApi(content, weather, 900000, () => null, async () => { throw new Error('Unexpected refresh'); });
   const url = await listen(server, t);
   let response = await fetch(`${url}/api/v1/dashboard`);
   let body = await response.json();
@@ -137,4 +138,78 @@ test('configuration validée et valeurs Toulouse', () => {
   assert.throws(() => configuration({ PORT: '1.5' }));
   assert.throws(() => configuration({ INFHOME_SNAPSHOT_URL: 'http://example.com' }));
   assert.throws(() => configuration({ INFHOME_LATITUDE: 'NaN' }));
+});
+
+test('POST actualise courses/agenda, partage la synchronisation et conserve le cache après échec', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'infhome-refresh-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const content = new Cache(join(directory, 'content.json'), validateSnapshot);
+  await content.replace(snapshot(), 1);
+  const weather = { value: { data: parseWeather(forecast(), '2026-09-13'), fetchedAt: 123 } };
+  const previousWeather = structuredClone(weather.value);
+  let calls = 0, release;
+  let arrived;
+  let arrival = new Promise(resolve => { arrived = resolve; });
+  const remote = createServer((req, res) => {
+    calls++;
+    release = body => res.end(body);
+    arrived();
+  });
+  const remoteUrl = await listen(remote, t);
+  const refresh = contentRefresher(content, remoteUrl, 1000);
+  const url = await listen(createApi(content, weather, 900000, () => true, refresh), t);
+  const next = snapshot(); next.shopping = ['Pommes']; next.agenda = [];
+  // A scheduled refresh and repeated calls share the same in-flight download.
+  const scheduled = refresh();
+  assert.equal(refresh(), scheduled);
+  await arrival;
+  let joined;
+  const joinedRefresh = new Promise(resolve => { joined = resolve; });
+  const manualUrl = await listen(createApi(content, weather, 900000, () => true, () => {
+    const pending = refresh(); joined(); return pending;
+  }), t);
+  const manual = fetch(`${manualUrl}/api/v1/dashboard/refresh`, { method: 'POST' });
+  await joinedRefresh;
+  assert.equal(calls, 1);
+  const cached = await (await fetch(`${url}/api/v1/dashboard`)).json();
+  assert.deepEqual(cached.content, snapshot());
+  release(JSON.stringify(next));
+  const response = await manual;
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).content, next);
+  await scheduled;
+  assert.deepEqual(weather.value, previousWeather);
+  assert.ok(content.value.fetchedAt > 1);
+  const saved = await readFile(content.path, 'utf8');
+  t.mock.method(console, 'error', () => {});
+  arrival = new Promise(resolve => { arrived = resolve; });
+  const failed = fetch(`${url}/api/v1/dashboard/refresh`, { method: 'POST' });
+  await arrival;
+  release('{broken');
+  assert.equal((await failed).status, 502);
+  assert.equal(await readFile(content.path, 'utf8'), saved);
+  assert.deepEqual(content.value.data, next);
+  arrival = new Promise(resolve => { arrived = resolve; });
+  const socket = connect(Number(new URL(url).port), '127.0.0.1');
+  const chunks = []; socket.on('data', chunk => chunks.push(chunk));
+  const closed = once(socket, 'close');
+  socket.write('POST /api/v1/dashboard/refresh HTTP/1.0\r\nContent-Length: 0\r\nConnection: close\r\n\r\n');
+  await arrival;
+  release(JSON.stringify(snapshot()));
+  await closed;
+  const raw = Buffer.concat(chunks), split = raw.indexOf('\r\n\r\n');
+  const headers = raw.subarray(0, split).toString(), body = raw.subarray(split + 4);
+  assert.match(headers, /^HTTP\/1\.1 200/);
+  assert.match(headers, /connection: close/i);
+  assert.doesNotMatch(headers, /transfer-encoding|content-encoding/i);
+  assert.equal(Number(headers.match(/content-length: (\d+)/i)[1]), body.length);
+  assert.deepEqual(JSON.parse(body).content, snapshot());
+  assert.deepEqual(content.value.data, snapshot());
+  assert.deepEqual(weather.value, previousWeather);
+  for (const method of ['GET', 'HEAD', 'PUT']) {
+    const denied = await fetch(`${url}/api/v1/dashboard/refresh`, { method });
+    assert.equal(denied.status, 405);
+    assert.equal(denied.headers.get('allow'), 'POST');
+  }
+  assert.equal(calls, 3);
 });

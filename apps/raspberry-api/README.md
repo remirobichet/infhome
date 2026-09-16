@@ -6,13 +6,15 @@ Service TypeScript pour un **Raspberry Pi Zero 2 W Rev 1.0**, Raspbian 13, archi
 
 - `GET /api/status` conserve la réponse historique `{"message":"Hello from Raspberry Pi"}`.
 - `GET /api/v1/dashboard` regroupe l'heure, la météo et le snapshot du backoffice.
-- Les deux téléchargements sont indépendants et commencent dès le démarrage, puis 900 secondes après la fin de chaque tentative. Une requête PSP ne déclenche jamais de téléchargement.
+- Les deux téléchargements sont indépendants et commencent dès le démarrage, puis 900 secondes après la fin de chaque tentative. Les GET PSP lisent uniquement les caches.
+- `POST /api/v1/dashboard/refresh`, sans corps, synchronise les courses et l'agenda puis renvoie le dashboard. La météo n'est pas téléchargée par cette route. Les actualisations simultanées partagent le téléchargement du contenu en cours. En cas d'échec, HTTP 502 est renvoyé et le cache précédent est conservé.
 - Le snapshot HTTPS est limité à 4 096 octets UTF-8 et validé strictement. Un téléchargement valide remplace le cache même si `updatedAt` est identique. Le contenu métier reste inchangé.
 - Les caches sont chargés avant l'ouverture HTTP et écrits par fichier temporaire, synchronisation puis renommage. En cas d'erreur distante ou d'écriture, la dernière valeur valide reste disponible. Un fichier corrompu est signalé et ignoré, sans être effacé.
 - Sans cache, `content` et/ou `weather` valent `null`. Le dashboard reste accessible avec HTTP 200 ; `/api/status` vérifie seulement le processus.
 - `stale` devient vrai après plus de deux intervalles sans téléchargement réussi (30 minutes par défaut), ou si l'horloge est antérieure au téléchargement. La météo devient aussi périmée lorsque sa date n'est plus celle du jour à Paris.
 - L'état NTP est vérifié toutes les 60 secondes avec `timedatectl` : `true`, `false`, ou `null` si inconnu. L'heure de réponse vient toujours du système.
-- Les réponses sont bornées à 8 192 octets, avec `Content-Length`, `Connection: close`, sans compression ni transfert chunked. HTTP/1.0 est accepté. L'API est en lecture seule.
+- Les réponses sont bornées à 8 192 octets, avec `Content-Length`, `Connection: close`, sans compression ni transfert chunked. HTTP/1.0 est accepté.
+- Le délai de téléchargement du contenu est plafonné à 45 s (8 s par défaut). Le POST dispose de 55 s d'inactivité côté serveur et de 60 s d'attente HTTP côté PSP.
 
 ### Météo Toulouse
 
@@ -158,9 +160,9 @@ sudo systemctl restart infhome-api
 Les tests locaux couvrent validation, météo, caches, réponses invalides/lentes, reprise distante et transport HTTP/1.0. L'installation `systemd`, les permissions et les binaires ARM doivent être validés sur le Pi :
 
 1. Vérifier le dashboard et les deux créneaux météo.
-2. Après déploiement du backoffice et publication, attendre une synchronisation et vérifier `content`.
+2. Publier une modification des courses et de l'agenda, puis appuyer sur Croix sur la PSP : vérifier le nouveau contenu et la conservation de la date de récupération météo. Le POST peut aussi être testé avec `curl --fail -X POST http://127.0.0.1:8080/api/v1/dashboard/refresh`.
 3. Couper l'accès Internet en conservant le LAN, puis redémarrer le service : les caches doivent rester disponibles.
 4. Rétablir Internet et vérifier la reprise, au prochain cycle.
 5. Redémarrer le Pi et vérifier le démarrage automatique et `time.synced`.
 
-Le client C PSP actuel lit encore `/api/status`. Son parseur et son affichage doivent être adaptés séparément au dashboard et à la limite de 8 Kio.
+Le client C PSP lit le dashboard toutes les 60 s et utilise le POST lors d'un appui sur Croix. Tester aussi les clics répétés et l'échec sans Internet : l'ancien affichage doit rester visible et l'état réseau doit signaler l'erreur.

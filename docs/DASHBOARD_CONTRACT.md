@@ -4,7 +4,17 @@ Implémenté le 13 septembre 2026. Route locale : `GET http://192.168.0.104:8080
 
 ## Transport
 
-JSON UTF-8, maximum 8 192 octets de corps, `Content-Length`, `Connection: close`, `Cache-Control: no-store`. Pas de gzip ni de transfert chunked. Requêtes HTTP/1.0 acceptées. Les en-têtes nécessitent un buffer distinct côté PSP. `HEAD` est accepté ; les méthodes d'écriture reçoivent 405.
+JSON UTF-8, maximum 8 192 octets de corps, `Content-Length`, `Connection: close`, `Cache-Control: no-store`. Pas de gzip ni de transfert chunked. Requêtes HTTP/1.0 acceptées. Les en-têtes nécessitent un buffer distinct côté PSP. `HEAD` est accepté sur les routes de lecture ; les méthodes d'écriture y reçoivent 405.
+
+### Actualisation manuelle
+
+`POST /api/v1/dashboard/refresh`, sans corps (`Content-Length: 0`), récupère et persiste le snapshot courses/agenda avant de renvoyer le même dashboard avec HTTP 200. La météo reste en cache. Les autres méthodes sur cette route reçoivent 405 (`Allow: POST`).
+
+Les synchronisations de contenu simultanées, automatiques ou manuelles, partagent le même téléchargement. Un échec de téléchargement, de validation ou de persistance renvoie HTTP 502 avec `{"error":"Content refresh failed"}` ; le cache précédent reste disponible via GET. Aucun ancien contenu n'est présenté comme une actualisation manuelle réussie.
+
+Le téléchargement du contenu utilise `INFHOME_TIMEOUT_SECONDS` (8 s par défaut), plafonné à 45 s. La connexion serveur du POST autorise 55 s d'inactivité et la PSP attend au maximum 60 s pour cette requête HTTP. La connexion Wi-Fi éventuelle est une étape distincte. Les GET conservent leur délai de 10 s côté PSP.
+
+Croix déclenche le POST en mode réel ; les clics pendant une opération réseau sont ignorés. L'ancien affichage reste visible pendant la requête et en cas d'erreur. La PSP continue ses GET automatiques toutes les 60 s ; les synchronisations Raspberry restent toutes les 15 min par défaut.
 
 ## Exemple
 

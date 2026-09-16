@@ -17,6 +17,7 @@
 static SceUID mutex = -1, worker = -1;
 static NetworkState shared;
 static int enabled = 1, stopping, requested = 1;
+static int manual_requested;
 
 static void lock(void) { sceKernelWaitSema(mutex, 1, NULL); }
 static void unlock(void) { sceKernelSignalSema(mutex, 1); }
@@ -118,15 +119,18 @@ static int receive(int socket_fd, char *buffer, size_t capacity, uint64_t deadli
     return -1;
 }
 
-static int fetch(Dashboard *out, const char **error)
+static int fetch(Dashboard *out, const char **error, int manual)
 {
-    const char request[] = "GET /api/v1/dashboard HTTP/1.0\r\nHost: " INFHOME_PI_IP ":8080\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
+    const char *request = manual
+        ? "POST /api/v1/dashboard/refresh HTTP/1.0\r\nHost: " INFHOME_PI_IP ":8080\r\nAccept: application/json\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        : "GET /api/v1/dashboard HTTP/1.0\r\nHost: " INFHOME_PI_IP ":8080\r\nAccept: application/json\r\nConnection: close\r\n\r\n";
     char headers[DASHBOARD_HEADER_LIMIT + 1], body[DASHBOARD_BODY_LIMIT + 1];
     struct sockaddr_in server;
     int socket_fd, nonblocking = 1, result, socket_error = 0, ok = 0;
     socklen_t error_length = sizeof(socket_error);
     size_t sent = 0, header_length = 0, body_length = 0, used = 0;
-    uint64_t deadline = sceKernelGetSystemTimeWide() + UINT64_C(10000000);
+    size_t request_length = strlen(request);
+    uint64_t deadline = sceKernelGetSystemTimeWide() + (manual ? UINT64_C(60000000) : UINT64_C(10000000));
     *error = "Connexion API impossible";
     memset(&server, 0, sizeof(server));
     server.sin_family = AF_INET;
@@ -140,9 +144,9 @@ static int fetch(Dashboard *out, const char **error)
         if (sceNetInetGetsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &socket_error, &error_length) < 0 || socket_error) goto done;
     }
     *error = "Envoi HTTP interrompu";
-    while (sent < sizeof(request) - 1) {
+    while (sent < request_length) {
         if (!ready(socket_fd, 1, deadline)) goto done;
-        result = (int)sceNetInetSend(socket_fd, request + sent, sizeof(request) - 1 - sent, 0);
+        result = (int)sceNetInetSend(socket_fd, request + sent, request_length - sent, 0);
         if (result < 0 && would_block()) continue;
         if (result <= 0) goto done;
         sent += (size_t)result;
@@ -178,13 +182,13 @@ static int network_worker(SceSize args, void *argp)
     Dashboard result;
     uint64_t next = 0;
     int inet_ready = 0, common_loaded = 0, inet_loaded = 0;
-    int end, run, refresh, state, code;
+    int end, run, refresh, manual, state, code;
     const char *error = "Requete annulee";
     (void)args; (void)argp;
     for (;;) {
         lock();
-        end = stopping; run = enabled; refresh = requested;
-        if (run) requested = 0;
+        end = stopping; run = enabled; refresh = requested; manual = manual_requested;
+        if (run) { requested = 0; manual_requested = 0; }
         unlock();
         if (end) break;
         if (!run) { sceKernelDelayThread(100000); continue; }
@@ -212,8 +216,8 @@ static int network_worker(SceSize args, void *argp)
             next = sceKernelGetSystemTimeWide() + UINT64_C(10000000);
             continue;
         }
-        status("Lecture du dashboard...", 1, 0);
-        if (active() && fetch(&result, &error)) {
+        status(manual ? "Actualisation courses/agenda..." : "Lecture du dashboard...", 1, 0);
+        if (active() && fetch(&result, &error, manual)) {
             lock();
             if (enabled && !stopping) {
                 shared.dashboard = result;
@@ -227,7 +231,7 @@ static int network_worker(SceSize args, void *argp)
             unlock();
             next = sceKernelGetSystemTimeWide() + UINT64_C(60000000);
         } else {
-            status(active() ? error : "Reseau en pause", 0, 0);
+            status(active() ? (manual ? "Echec actualisation courses/agenda" : error) : "Reseau en pause", 0, 0);
             next = sceKernelGetSystemTimeWide() + UINT64_C(10000000);
         }
     }
@@ -260,13 +264,15 @@ void network_read(NetworkState *out)
 void network_refresh(void)
 {
     if (mutex < 0) return;
-    lock(); requested = 1; unlock();
+    lock();
+    if (enabled && !shared.busy) { requested = 1; manual_requested = 1; shared.busy = 1; }
+    unlock();
 }
 
 void network_enable(int value)
 {
     if (mutex < 0) return;
-    lock(); enabled = value; if (value) requested = 1; unlock();
+    lock(); enabled = value; manual_requested = 0; if (value) requested = 1; unlock();
 }
 
 void network_stop(void)

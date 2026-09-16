@@ -46,6 +46,7 @@ pnpm api:package
 
 - `GET /api/status` : message historique compatible avec le homebrew actuel.
 - `GET /api/v1/dashboard` : heure/NTP, météo Toulouse matin et après-midi/soir, courses et agenda.
+- `POST /api/v1/dashboard/refresh` : synchronise immédiatement les courses et l'agenda, puis renvoie le dashboard ; la météo reste en cache.
 - Synchronisation des deux sources toutes les 15 minutes, caches persistants et fonctionnement hors ligne.
 - Déploiement depuis WSL par archive `.tar.gz`, `scp`, puis service `systemd` ; aucun Git ou Docker sur le Pi.
 
@@ -115,7 +116,7 @@ Le homebrew demarre toujours en mode reel : il se connecte au Wi-Fi, puis recupe
 - `HAUT` alterne entre la page systeme et l'accueil. La page systeme est volontairement absente du menu et affiche l'IP PSP, l'etat Wi-Fi, l'accessibilite de l'API et l'adresse du Raspberry Pi.
 - `SELECT` bascule entre le mode reel et le mode demo.
 - En mode demo, aucune requete reseau n'est envoyee et le dashboard affiche des donnees locales simulees.
-- `CROIX` rafraichit la source active : API en mode reel ou donnees locales en mode demo.
+- `CROIX` demande au Raspberry de synchroniser les courses et l'agenda publiés, puis affiche le dashboard actualisé. Les clics pendant une opération réseau sont ignorés. En mode démo, seules les données locales sont rafraîchies.
 - `HOME` quitte l'application.
 
 ### Emulation avec PPSSPP

@@ -3,15 +3,29 @@ import type { Cache } from "./cache";
 import type { Snapshot } from "./snapshot";
 import { localDate, type Weather } from "./weather";
 
-export function createApi(content: Cache<Snapshot>, weather: Cache<Weather>, intervalMs: number, synced: () => boolean | null) {
-  return createServer((req, res) => {
+export function createApi(content: Cache<Snapshot>, weather: Cache<Weather>, intervalMs: number, synced: () => boolean | null,
+  refreshContent: () => Promise<void>) {
+  return createServer(async (req, res) => {
     let status = 200;
     let payload: unknown;
-    if (req.method !== "GET" && req.method !== "HEAD") {
+    const refreshRoute = req.url === "/api/v1/dashboard/refresh";
+    if (refreshRoute && req.method === "POST") {
+      req.socket.setTimeout(55000);
+      try { await refreshContent(); }
+      catch (error) {
+        console.error("Content refresh failed:", error);
+        status = 502;
+      }
+    }
+    if (status !== 200) {
+      payload = { error: "Content refresh failed" };
+    } else if (refreshRoute && req.method !== "POST") {
+      status = 405; payload = { error: "Method not allowed" }; res.setHeader("Allow", "POST");
+    } else if (!refreshRoute && req.method !== "GET" && req.method !== "HEAD") {
       status = 405; payload = { error: "Method not allowed" }; res.setHeader("Allow", "GET, HEAD");
     } else if (req.url === "/api/status") {
       payload = { message: "Hello from Raspberry Pi" };
-    } else if (req.url === "/api/v1/dashboard") {
+    } else if (req.url === "/api/v1/dashboard" || refreshRoute) {
       const now = Math.floor(Date.now() / 1000);
       const stale = (fetchedAt: number) => now < fetchedAt || now - fetchedAt > intervalMs / 1000 * 2;
       const currentWeather = weather.value;

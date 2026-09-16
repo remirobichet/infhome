@@ -6,6 +6,7 @@ import { configuration } from "./config";
 import { validateSnapshot } from "./snapshot";
 import { localDate, parseWeather, validateWeather } from "./weather";
 import { createApi } from "./server";
+import { contentRefresher } from "./content";
 
 async function main() {
   const config = configuration();
@@ -13,7 +14,8 @@ async function main() {
   const weather = new Cache(join(config.dataDir, "weather.json"), validateWeather);
   await Promise.all([content.load(), weather.load()]);
   let synced: boolean | null = null;
-  const server = createApi(content, weather, config.intervalMs, () => synced);
+  const refreshContent = contentRefresher(content, config.snapshotUrl, config.timeoutMs);
+  const server = createApi(content, weather, config.intervalMs, () => synced, refreshContent);
   server.requestTimeout = 10000;
   server.headersTimeout = 10000;
   server.setTimeout(10000, socket => socket.destroy());
@@ -36,10 +38,7 @@ async function main() {
     };
     void run();
   }
-  loop("content", config.intervalMs, async () => {
-    await content.replace(await downloadJson(config.snapshotUrl, 4096, config.timeoutMs), Math.floor(Date.now() / 1000));
-    console.log("Content synchronized");
-  });
+  loop("content", config.intervalMs, refreshContent);
   loop("weather", config.intervalMs, async () => {
     const today = localDate();
     const url = new URL("https://api.open-meteo.com/v1/forecast");
