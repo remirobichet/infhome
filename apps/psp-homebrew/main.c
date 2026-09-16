@@ -27,9 +27,16 @@ PSP_HEAP_SIZE_KB(1024);
 #define COLOR_TRIANGLE 0xFF6FC477
 #define COLOR_CIRCLE 0xFF625DD8
 #define COLOR_CROSS 0xFFD88D4F
+#define COLOR_CARD_BORDER 0xFF392E24
 #define FRAME_BYTES (512 * 272 * 4)
 #define CONTENT_WIDTH 42
 #define SHOPPING_PER_PAGE 6
+#define FRESHNESS_ROW 6
+#define CARD_LEFT_PX 161
+#define CARD_RIGHT_PX 476
+#define CONTENT_LEFT_PX 168
+#define CARD_PAD_TOP 4
+#define CARD_PAD_BOTTOM 2
 
 typedef enum { PAGE_HOME, PAGE_SHOPPING, PAGE_AGENDA, PAGE_SYSTEM } Page;
 static Page current_page = PAGE_HOME;
@@ -70,11 +77,24 @@ static void text(int x, int y, u32 color, const char *value)
     int width = 68 - x;
     if (x < 0 || width <= 0 || y < 0 || y >= 34) return;
     length = strlen(value);
-    if (length > (size_t)width) length = (size_t)width;
-    memcpy(safe, value, length); safe[length] = 0;
+    if (length > (size_t)width) {
+        memcpy(safe, value, (size_t)width);
+        if (width >= 3) memcpy(safe + width - 3, "...", 3);
+        safe[width] = 0;
+    } else {
+        memcpy(safe, value, length);
+        safe[length] = 0;
+    }
     pspDebugScreenSetXY(x, y);
     pspDebugScreenSetTextColor(color);
     pspDebugScreenPrintf("%s", safe);
+}
+
+static void banner_text(int x, int y, u32 fg, u32 bg, const char *value)
+{
+    pspDebugScreenSetBackColor(bg);
+    text(x, y, fg, value);
+    pspDebugScreenSetBackColor(COLOR_BG);
 }
 
 static void rectangle(int x, int y, int width, int height, u32 color)
@@ -83,6 +103,28 @@ static void rectangle(int x, int y, int width, int height, u32 color)
     for (row = y; row < y + height && row < 272; ++row)
         for (column = x; column < x + width && column < 480; ++column)
             if (row >= 0 && column >= 0) pixels[row * 512 + column] = color;
+}
+
+static void card_outline(int top_row, int rows, int left, int right, u32 color)
+{
+    int y = top_row * 8 - CARD_PAD_TOP, h = rows * 8 + CARD_PAD_TOP + CARD_PAD_BOTTOM;
+    rectangle(left, y, right - left, 1, color);
+    rectangle(left, y + h - 1, right - left, 1, color);
+    rectangle(left, y, 1, h, color);
+    rectangle(right - 1, y, 1, h, color);
+}
+
+static void empty_state(int y, const char *message)
+{
+    int i;
+    rectangle(175, y * 8 + 3, 4, 1, COLOR_MUTED); rectangle(175, y * 8 + 12, 4, 1, COLOR_MUTED);
+    rectangle(172, y * 8 + 6, 1, 4, COLOR_MUTED); rectangle(181, y * 8 + 6, 1, 4, COLOR_MUTED);
+    for (i = 1; i < 3; ++i) {
+        rectangle(175 - i, y * 8 + 3 + i, 1, 1, COLOR_MUTED);
+        rectangle(178 + i, y * 8 + 3 + i, 1, 1, COLOR_MUTED);
+    }
+    card_outline(y, 3, CARD_LEFT_PX, CARD_RIGHT_PX, COLOR_CARD_BORDER);
+    text(28, y + 1, COLOR_TEXT, message);
 }
 
 static void button(int y, Page page)
@@ -125,29 +167,42 @@ static void menu(void)
         rectangle(18 - i, 225 + i, 1, 1, COLOR_CROSS);
     }
     text(4, 28, COLOR_MUTED, "Actualiser");
+    text(1, 30, COLOR_MUTED, "HAUT    Systeme");
     text(1, 31, COLOR_MUTED, "SELECT  Reel/Demo");
 }
 
 static int wrap(const char *utf8, char lines[][CONTENT_WIDTH + 1], int maximum)
 {
     char ascii[200];
-    size_t pos = 0, length, take, split;
-    int count = 0;
+    size_t pos = 0, length, take, split, shown;
+    int count = 0, forced;
     dashboard_ascii(utf8, ascii, sizeof(ascii));
     length = strlen(ascii);
     while (pos < length && count < maximum) {
         take = length - pos;
+        forced = 0;
         if (take > CONTENT_WIDTH) {
             take = CONTENT_WIDTH;
             split = take;
             while (split > 0 && ascii[pos + split] != ' ') --split;
             if (split > 0 && length - pos - split <= (size_t)(maximum - count - 1) * CONTENT_WIDTH)
                 take = split;
+            else
+                forced = 1;
         }
-        memcpy(lines[count], ascii + pos, take); lines[count][take] = 0;
+        if (forced) {
+            /* No space to break at: cut mid-word and mark it with a hyphen,
+               distinct from text()'s "..." which means content was dropped entirely. */
+            shown = take - 1;
+            memcpy(lines[count], ascii + pos, shown);
+            lines[count][shown] = '-'; lines[count][shown + 1] = 0;
+            pos += shown;
+        } else {
+            memcpy(lines[count], ascii + pos, take); lines[count][take] = 0;
+            pos += take;
+        }
         ++count;
-        pos += take;
-        while (ascii[pos] == ' ') ++pos;
+        while (pos < length && ascii[pos] == ' ') ++pos;
     }
     return count;
 }
@@ -214,6 +269,8 @@ static void home(const Dashboard *d, int known, const ParisTime *time, int64_t n
     char line[80], morning[80], evening[80], date[16];
     int stale;
     text(24, 5, COLOR_MUTED, "MAISON / TOULOUSE");
+    if (known && d->has_content && old_content(d, now))
+        text(24, FRESHNESS_ROW, COLOR_AMBER, "Courses et agenda: donnees anciennes");
     large_clock(time->hour, time->minute, known);
     if (known) {
         snprintf(line, sizeof(line), "%s %02d/%02d/%04d", weekdays[time->weekday], time->day, time->month, time->year);
@@ -236,8 +293,10 @@ static void home(const Dashboard *d, int known, const ParisTime *time, int64_t n
         text(24, 19, stale ? COLOR_AMBER : COLOR_MUTED, line);
         snprintf(morning, sizeof(morning), "Matin       max %.1f C", d->morning.max);
         snprintf(evening, sizeof(evening), "Apres-midi/soir  max %.1f C", d->evening.max);
+        card_outline(21, 3, CONTENT_LEFT_PX, CONTENT_LEFT_PX + CONTENT_WIDTH * 7, COLOR_CARD_BORDER);
         text(24, 21, COLOR_TEXT, morning);
         wrapped(22, d->morning.label, 2, COLOR_MUTED);
+        card_outline(25, 3, CONTENT_LEFT_PX, CONTENT_LEFT_PX + CONTENT_WIDTH * 7, COLOR_CARD_BORDER);
         text(24, 25, COLOR_TEXT, evening);
         wrapped(26, d->evening.label, 2, COLOR_MUTED);
     }
@@ -254,19 +313,21 @@ static void shopping(const Dashboard *d, int known, int64_t now)
     char line[64];
     text(24, 5, COLOR_MUTED, "A ACHETER / LECTURE SEULE");
     if (!known || !d->has_content) { text(24, 10, COLOR_AMBER, "Liste indisponible"); return; }
-    if (!d->shopping_count) { text(24, 10, COLOR_TEXT, "Rien a acheter"); }
+    if (old_content(d, now)) text(24, FRESHNESS_ROW, COLOR_AMBER, "Derniere liste connue / ancienne");
+    if (!d->shopping_count) empty_state(10, "Rien a acheter");
     pages = (d->shopping_count + SHOPPING_PER_PAGE - 1) / SHOPPING_PER_PAGE;
     if (pages < 1) pages = 1;
     if (shopping_page >= pages) shopping_page = pages - 1;
     first = shopping_page * SHOPPING_PER_PAGE;
     for (i = first; i < d->shopping_count && i < first + SHOPPING_PER_PAGE; ++i) {
         /* Two full-width lines per article, plus a separator line. */
-        wrapped(9 + (i - first) * 3, d->shopping[i], 2, COLOR_TEXT);
+        int row = 9 + (i - first) * 3;
+        card_outline(row, 2, CARD_LEFT_PX, CARD_RIGHT_PX, COLOR_CARD_BORDER);
+        wrapped(row, d->shopping[i], 2, COLOR_TEXT);
     }
     snprintf(line, sizeof(line), "%d articles / Page %d/%d", d->shopping_count, shopping_page + 1, pages);
     text(24, 29, COLOR_MUTED, line);
     if (pages > 1) text(24, 31, COLOR_AMBER, "< GAUCHE   /   DROITE >");
-    if (old_content(d, now)) text(24, 7, COLOR_AMBER, "Derniere liste connue / ancienne");
 }
 
 static void agenda(const Dashboard *d, int known, int64_t now)
@@ -275,11 +336,12 @@ static void agenda(const Dashboard *d, int known, int64_t now)
     char start[16], end[16], line[64];
     text(24, 5, COLOR_MUTED, "PROCHAINS EVENEMENTS");
     if (!known || !d->has_content) { text(24, 10, COLOR_AMBER, "Agenda indisponible"); return; }
-    if (old_content(d, now)) text(24, 7, COLOR_AMBER, "Dernier agenda connu / ancien");
-    if (!d->agenda_count) { text(24, 10, COLOR_TEXT, "Aucun evenement a venir"); return; }
+    if (old_content(d, now)) text(24, FRESHNESS_ROW, COLOR_AMBER, "Dernier agenda connu / ancien");
+    if (!d->agenda_count) { empty_state(10, "Aucun evenement a venir"); return; }
     for (i = 0; i < d->agenda_count; ++i) {
         const AgendaEvent *event = &d->agenda[i];
         y = 9 + i * 7;
+        card_outline(y, 5, CARD_LEFT_PX, CARD_RIGHT_PX, COLOR_CARD_BORDER);
         short_date(event->start, start, sizeof(start));
         if (event->end[0]) {
             short_date(event->end, end, sizeof(end));
@@ -321,26 +383,35 @@ static void system_page(const Dashboard *d, int known, int64_t now, uint64_t rec
 
 static void draw(uint64_t ticks)
 {
+    static const char spin_frames[4] = {'-', '\\', '|', '/'};
     const Dashboard *d = demo_mode ? &demo : &network.dashboard;
     uint64_t received = demo_mode ? demo_received_us : network.received_us;
     int known = demo_mode || network.has_dashboard;
     int64_t now = known ? current_unix(d, received, ticks) : 0;
     ParisTime time = {0};
-    const char *status;
+    char status[24];
     u32 color;
+    int urgent = 0;
     if (known) dashboard_paris_time(now, &time);
     /* Match pspDebugScreen's uncached VRAM alias for both text and geometry. */
     pixels = (u32 *)(((uintptr_t)sceGeEdramGetAddr() | 0x40000000u) + back_buffer * FRAME_BYTES);
     pspDebugScreenSetOffset(back_buffer * FRAME_BYTES);
     pspDebugScreenSetBackColor(COLOR_BG);
     pspDebugScreenClear();
-    if (demo_mode) { status = "DEMO"; color = COLOR_AMBER; }
-    else if (network.busy) { status = "ACTUALISATION"; color = COLOR_AMBER; }
-    else if (!network.online) { status = "HORS LIGNE"; color = COLOR_RED; }
-    else if (!known || old_content(d, now) || old_weather(d, now, &time)) { status = "DONNEES PARTIELLES"; color = COLOR_AMBER; }
-    else { status = "EN LIGNE"; color = COLOR_GREEN; }
+    if (demo_mode) { strcpy(status, "DEMO"); color = COLOR_AMBER; }
+    else if (network.busy) {
+        int frame = (int)((ticks / 150000ULL) % 4);
+        snprintf(status, sizeof(status), "%c ACTUALISATION", spin_frames[frame]);
+        color = COLOR_AMBER;
+    }
+    else if (!network.online) { strcpy(status, " HORS LIGNE "); color = COLOR_RED; urgent = 1; }
+    else if (!known || old_content(d, now) || old_weather(d, now, &time)) {
+        strcpy(status, " DONNEES PARTIELLES "); color = COLOR_AMBER; urgent = 1;
+    }
+    else { strcpy(status, "EN LIGNE"); color = COLOR_GREEN; }
     text(2, 1, COLOR_AMBER, "INFHOME");
-    text(67 - (int)strlen(status), 1, color, status);
+    if (urgent) banner_text(67 - (int)strlen(status), 1, COLOR_BG, color, status);
+    else text(67 - (int)strlen(status), 1, color, status);
     rectangle(0, 30, 480, 1, COLOR_LINE);
     if (current_page == PAGE_SYSTEM) system_page(d, known, now, received, ticks, &time);
     else {
@@ -359,7 +430,7 @@ static void draw(uint64_t ticks)
 int main(void)
 {
     unsigned previous_buttons = 0, last_revision = ~0u;
-    uint64_t last_second = UINT64_MAX, ticks, second;
+    uint64_t last_second = UINT64_MAX, last_spin_tick = 0, ticks, second;
     int dirty = 1;
     setup_callbacks();
     pspDebugScreenInit();
@@ -403,6 +474,9 @@ int main(void)
             last_second = second; dirty = 1;
             /* Dedicated mains-powered display: keep both system and backlight awake. */
             scePowerTick(0);
+        }
+        if (!demo_mode && network.busy && ticks - last_spin_tick >= 150000ULL) {
+            last_spin_tick = ticks; dirty = 1;
         }
         if (dirty) { draw(ticks); dirty = 0; }
         else sceDisplayWaitVblankStart();
