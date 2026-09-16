@@ -218,8 +218,10 @@ static void home(const Dashboard *d, int known, const ParisTime *time, int64_t n
     if (known) {
         snprintf(line, sizeof(line), "%s %02d/%02d/%04d", weekdays[time->weekday], time->day, time->month, time->year);
         text(24, 13, COLOR_TEXT, line);
-        text(24, 15, d->synced == 1 ? COLOR_MUTED : COLOR_AMBER,
-             d->synced == 1 ? "Heure de Paris" : d->synced == 0 ? "Heure non synchronisee" : "Synchronisation NTP inconnue");
+        if (d->synced != 1) {
+            text(24, 15, COLOR_AMBER,
+                 d->synced == 0 ? "Heure non synchronisee" : "Synchronisation NTP inconnue");
+        }
     } else text(24, 13, COLOR_MUTED, "En attente de l'heure Raspberry");
     rectangle(168, 142, 294, 1, COLOR_LINE);
     if (!known || !d->has_weather) {
